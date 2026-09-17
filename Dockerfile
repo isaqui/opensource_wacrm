@@ -1,9 +1,22 @@
 # syntax=docker/dockerfile:1
 
+# ===============================================================
+# wacrm — production image (Next.js 16 standalone output)
+#
+# Works with `docker compose up --build` AND with Easypanel's
+# "Dockerfile" build type. Easypanel forwards every environment
+# variable you define on the service as a `--build-arg`, so the
+# ARG names below MUST match the env var names for the public
+# (NEXT_PUBLIC_*) values to be inlined into the client bundle.
+# ===============================================================
+
 # ---------------------------------------------------------------
 # Stage 1 — install dependencies (cached until package*.json change)
 # ---------------------------------------------------------------
 FROM node:20-alpine AS deps
+# sharp (image processing, pinned in package.json overrides) needs
+# the glibc compat shim on musl/Alpine.
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -12,12 +25,16 @@ RUN npm ci
 # Stage 2 — build
 #
 # NEXT_PUBLIC_* values are inlined into the client bundle at build
-# time, so they must be provided as build args (docker-compose.yml
-# forwards them from .env.local). Server-only secrets (service role
-# key, ENCRYPTION_KEY, META_APP_SECRET, ...) are read at runtime and
-# must NOT be baked into the image.
+# time, so they must be provided as build args:
+#   - docker-compose.yml forwards them from .env.local.
+#   - Easypanel forwards them automatically from the service's
+#     Environment section (env var name == ARG name).
+# Server-only secrets (SUPABASE_SERVICE_ROLE_KEY, ENCRYPTION_KEY,
+# META_APP_SECRET, ...) are read at runtime and must NOT be baked
+# into the image.
 # ---------------------------------------------------------------
 FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -52,4 +69,10 @@ COPY --from=builder --chown=nextjs:nextjs /app/public ./public
 
 USER nextjs
 EXPOSE 3000
+
+# Lets Easypanel / Docker report container health. Any response
+# below HTTP 500 (including auth redirects to /login) counts as up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)).then((r)=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
+
 CMD ["node", "server.js"]
