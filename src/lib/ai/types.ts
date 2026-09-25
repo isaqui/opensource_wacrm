@@ -3,10 +3,21 @@
 //
 // One small provider-agnostic surface so the inbox draft route and the
 // inbound auto-reply bot both talk to `generateReply` without caring
-// whether the account is on OpenAI or Anthropic.
+// whether the account is on OpenAI, Anthropic, or OpenRouter.
 // ============================================================
 
-export type AiProvider = 'openai' | 'anthropic'
+// 'openrouter' speaks OpenAI's Chat Completions wire format, so it
+// shares the OpenAI adapter (different base URL) — see providers/.
+export type AiProvider = 'openai' | 'anthropic' | 'openrouter'
+
+/** The provider values accepted from clients / stored in the DB. Keep in
+ *  sync with the `ai_configs_provider_check` constraint (migration 043). */
+export const AI_PROVIDERS = ['openai', 'anthropic', 'openrouter'] as const
+
+/** Narrow untrusted request input to a supported `AiProvider`. */
+export function isAiProvider(value: unknown): value is AiProvider {
+  return (AI_PROVIDERS as readonly unknown[]).includes(value)
+}
 
 /**
  * Account AI setup, decrypted and ready to use. Produced by
